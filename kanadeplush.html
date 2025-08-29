@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kanade Plushie — 5×5 Box (Bottom-Fill, Smooth Bounce)</title>
+<style>
+  :root{
+    /* puzzle look */
+    --tile:100px; --gap:6px; --cols-puz:3;
+    --puzw: calc(var(--cols-puz)*var(--tile) + (var(--cols-puz) - 1)*var(--gap));
+    --ink:#e8ecff; --bg:#0b0d12; --line:#20263e;
+  }
+  *{ box-sizing:border-box }
+  html,body{ height:100% }
+  body{
+    margin:0; padding:16px; color:var(--ink);
+    background:radial-gradient(1200px 600px at 15% -10%,#1b1f31 0%,#0b0d12 40%);
+    font:500 14px/1.45 ui-sans-serif,system-ui,Inter,Arial;
+  }
+  .wrap{ width:var(--puzw); margin:0 auto; }
+  header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px }
+  h1{ margin:0; font-size:18px; font-weight:800 }
+  .btn{ padding:8px 12px; border:1px solid var(--line); background:#0f1322; border-radius:12px; color:var(--ink); cursor:pointer }
+  .btn:active{ transform:translateY(1px) }
+  .small{ font-size:12px; opacity:.85 }
+
+  /* Puzzle */
+  #puzzle{
+    width:var(--puzw); margin:0 auto 14px;
+    display:grid; gap:var(--gap);
+    grid-template-columns:repeat(var(--cols-puz), var(--tile));
+    grid-template-rows:repeat(var(--cols-puz), var(--tile));
+  }
+  .tile{
+    width:var(--tile); height:var(--tile); border-radius:10px;
+    background-image:url('kanadeplush.png');
+    background-size:calc(var(--cols-puz)*var(--tile)) calc(var(--cols-puz)*var(--tile));
+    background-repeat:no-repeat;
+    background-color:#0f1322; border:1px solid #1d2542;
+    box-shadow:inset 0 0 0 1px #0003; cursor:pointer;
+  }
+  .tile.empty{ background:none; border:1px dashed #394166; cursor:default }
+
+  /* Box (same width as puzzle) */
+  .stage{
+    position:relative; width:var(--puzw); margin:16px auto 0;
+    border-radius:14px; overflow:hidden;
+    border:2px solid #8f7fff; background:linear-gradient(180deg,#1a1f33 0%, #0f1426 100%);
+    box-shadow:inset 0 0 30px #0008, 0 6px 40px #0006;
+  }
+  #play{ position:relative; padding:10px; }
+  .box-inner{ position:relative; width:100%; height:100%; }
+
+  /* Plush */
+  .plush{
+    position:absolute; transform-origin:center; pointer-events:none;
+    transition: transform 700ms cubic-bezier(.22,.9,.25,1);
+    will-change: transform;
+  }
+  .plush img{ width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 4px 10px rgba(0,0,0,.45)) }
+
+  /* Poof */
+  .poof{ position:fixed; width:140px; height:140px; pointer-events:none;
+    background:radial-gradient(#fff, #fff0 60%); border-radius:50%;
+    transform:translate(-50%,-50%) scale(.3); opacity:1; animation:poof .5s ease-out forwards;
+  }
+  @keyframes poof{ to{ transform:translate(-50%,-50%) scale(1.8); opacity:0 } }
+
+  footer{ margin-top:12px; text-align:center; font-size:12px; opacity:.8 }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Kanade Plushie — 5×5 Box (Bottom-Fill)</h1>
+    <div class="controls">
+      <button id="btnAdd" class="btn">Add Plushie</button>
+      <button id="btnAdd10" class="btn">+10</button>
+      <button id="btnClear" class="btn">Empty Box</button>
+      <span class="small">Count: <b id="countLbl">0</b> / 25</span>
+    </div>
+  </header>
+
+  <!-- Puzzle -->
+  <div id="puzzle"></div>
+
+  <!-- Box -->
+  <div class="stage"><div id="play"><div id="inner" class="box-inner"></div></div></div>
+
+  <footer>Solve puzzles to craft plushies → they glide down from the top-center with a soft bounce.</footer>
+</div>
+
+<script>
+/* ---------- Config ---------- */
+const IMG = 'kanadeplush.png';
+const LS_KEY = 'kanade_plush_fill_v2';
+
+const COLS = 5, ROWS = 5;
+const MAX  = 25;    // fixed 25 plushies
+const GAP  = 6;     // gap between cells (visual)
+const PAD  = 10;    // stage padding
+const SCALE = 1.3;  // plush size multiplier (bigger than a grid cell)
+const STEP_Y = 0.85;// vertical overlap (85% step = 15% overlap)
+
+/* ---------- Elements ---------- */
+const puzzle = document.getElementById('puzzle');
+const play   = document.getElementById('play');
+const inner  = document.getElementById('inner');
+const btnAdd = document.getElementById('btnAdd');
+const btnAdd10= document.getElementById('btnAdd10');
+const btnClear= document.getElementById('btnClear');
+const countLbl= document.getElementById('countLbl');
+
+/* ---------- State ---------- */
+let state = { count: 0, img: IMG };
+try{ const s = JSON.parse(localStorage.getItem(LS_KEY)||'null'); if(s) state={...state,...s}; }catch{}
+updateCount();
+
+/* ---------- Sizing ---------- */
+function boxWidth(){ return document.querySelector('.wrap').getBoundingClientRect().width; }
+function baseCell(){ return (boxWidth() - (COLS-1)*GAP - 2*PAD) / COLS; }
+function plushSize(){ return baseCell() * SCALE; }
+function boxHeight(){ 
+  const s = plushSize();
+  return (s + (ROWS-1)*(s*STEP_Y)) + 2*PAD;   // first row full height + overlapped steps
+}
+function layoutBox(){
+  // set outer/inner sizes
+  document.querySelector('.stage').style.height = boxHeight()+'px';
+  inner.style.width  = (boxWidth()-2*PAD)+'px';
+  inner.style.height = (boxHeight()-2*PAD)+'px';
+
+  // resize/reposition existing plushies
+  const s=plushSize();
+  [...inner.children].forEach((el,i)=>{
+    el.style.width=s+'px'; el.style.height=s+'px';
+    const {x,y}=targetPos(i); const rot=parseFloat(el.dataset.rot||'0');
+    setTransform(el,x,y,rot);
+  });
+}
+
+/* ---------- Helpers ---------- */
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+function updateCount(){ countLbl.textContent=state.count; }
+
+/* Target position rules:
+   - Horizontal step is auto-fitted so the last plush finishes inside the right edge.
+   - Vertical step uses overlap, and fills from the bottom row up.
+*/
+function targetPos(index){
+  const c=index%COLS, rFromBottom=Math.floor(index/COLS);
+  const s=plushSize();
+
+  // auto-fit horizontal step so last column is inside the box
+  const availableW = inner.clientWidth - s;
+  const stepX = COLS>1 ? availableW/(COLS-1) : 0;
+
+  const stepY = s*STEP_Y;
+  const x = c*stepX;
+  const y = (inner.clientHeight - s) - (rFromBottom*stepY);
+
+  return {x,y};
+}
+function setTransform(el,x,y,rot){ el.style.transform=`translate(${x}px,${y}px) rotate(${rot}deg)`; }
+function centerTopStart(){
+  const s=plushSize();
+  const startX=(inner.getBoundingClientRect().width - s)/2;
+  const startY=-s-12;
+  return {startX,startY};
+}
+
+/* ---------- Spawn with smooth, *upward-only* bounce ---------- */
+function spawnTo(index,animate=true){
+  const s=plushSize();
+  const el=document.createElement('div'); el.className='plush';
+  el.style.width=s+'px'; el.style.height=s+'px';
+  const im=document.createElement('img'); im.src=state.img; el.appendChild(im);
+  inner.appendChild(el);
+
+  const {x:tx,y:ty}=targetPos(index);
+  const rot=(Math.random()*40-20); el.dataset.rot=rot;
+
+  if(!animate){
+    el.style.transition='none'; setTransform(el,tx,ty,rot);
+    void el.offsetHeight; el.style.transition=''; return el;
+  }
+
+  // start at top-center
+  const {startX,startY}=centerTopStart();
+  setTransform(el,startX,startY,0);
+
+  requestAnimationFrame(()=>{
+    // 1) long, smooth drop to target (slower)
+    el.style.transition='transform 900ms cubic-bezier(.2,.9,.2,1)';
+    setTransform(el,tx,ty,rot*0.95);
+
+    // 2) small bounce *up* (never below the border)
+    setTimeout(()=>{
+      const up = Math.min(12, ty); // clamp so we don't go above the top if very high
+      el.style.transition='transform 380ms cubic-bezier(.3,1.3,.3,1)';
+      setTransform(el,tx,ty - up,rot);
+    }, 900);
+
+    // 3) settle back to target
+    setTimeout(()=>{
+      el.style.transition='transform 320ms ease-out';
+      setTransform(el,tx,ty,rot);
+    }, 900+380);
+  });
+
+  return el;
+}
+
+/* ---------- Controls ---------- */
+function addOne(){
+  if(state.count>=MAX) return;
+  spawnTo(state.count,true); state.count++; save(); updateCount();
+}
+function addMany(n){ for(let i=0;i<n && state.count<MAX;i++){ setTimeout(addOne,i*140);} }
+function clearAll(){ state.count=0; save(); updateCount(); inner.innerHTML=''; }
+function rebuild(){
+  inner.innerHTML=''; if(state.count>MAX) state.count=MAX;
+  layoutBox(); for(let i=0;i<state.count;i++) spawnTo(i,false); updateCount();
+}
+
+/* ---------- Events ---------- */
+window.addEventListener('load',()=>{ layoutBox(); rebuild(); });
+window.addEventListener('resize',()=> layoutBox());
+btnAdd.addEventListener('click',addOne);
+btnAdd10.addEventListener('click',()=>addMany(10));
+btnClear.addEventListener('click',clearAll);
+
+/* ---------- Puzzle ---------- */
+const W=3,H=3,TILE=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--tile'));
+let emptyIndex=8;
+function initPuzzle(){
+  puzzle.innerHTML='';
+  for(let i=0;i<W*H;i++){
+    const d=document.createElement('div');
+    d.className='tile'+(i===W*H-1?' empty':'');
+    if(i!==W*H-1){
+      const x=(i%W)*-TILE, y=((i/W)|0)*-TILE;
+      d.style.backgroundPosition=`${x}px ${y}px`;
+    }
+    puzzle.appendChild(d);
+  }
+  emptyIndex=W*H-1; shufflePuzzle();
+}
+function neighbors(idx){ const r=(idx/W)|0,c=idx%W,out=[]; if(r>0)out.push(idx-W); if(r<H-1)out.push(idx+W); if(c>0)out.push(idx-1); if(c<W-1)out.push(idx+1); return out; }
+function swapTiles(i,j){ const a=puzzle.children[i],b=puzzle.children[j]; const t=a.style.backgroundPosition; a.style.backgroundPosition=b.style.backgroundPosition; b.style.backgroundPosition=t; a.classList.toggle('empty'); b.classList.toggle('empty'); }
+function shufflePuzzle(){ for(let k=0;k<120;k++){ const opts=neighbors(emptyIndex); const pick=opts[(Math.random()*opts.length)|0]; swapTiles(pick,emptyIndex); emptyIndex=pick; } }
+function moveTile(i){ if(!neighbors(emptyIndex).includes(i))return; swapTiles(i,emptyIndex); emptyIndex=i; checkSolved(); }
+puzzle.addEventListener('click',e=>{ const cell=e.target.closest('.tile'); if(!cell||cell.classList.contains('empty'))return; const idx=[...puzzle.children].indexOf(cell); moveTile(idx); });
+function checkSolved(){
+  for(let i=0;i<W*H-1;i++){ const x=(i%W)*-TILE,y=((i/W)|0)*-TILE; if(puzzle.children[i].style.backgroundPosition!==`${x}px ${y}px`)return; }
+  const rect=puzzle.getBoundingClientRect();
+  const puff=document.createElement('div'); puff.className='poof';
+  puff.style.left=(rect.left+rect.width/2)+'px'; puff.style.top=(rect.top+rect.height/2)+'px';
+  document.body.appendChild(puff); setTimeout(()=>puff.remove(),520);
+  addOne(); setTimeout(()=>initPuzzle(),550);
+}
+initPuzzle();
+</script>
+</body>
+</html>
